@@ -1,0 +1,100 @@
+name: Advanced CI/CD
+
+on:
+  push:
+    branches: [ "main" ]
+  release:
+    types: [ created ]
+
+jobs:
+
+  # Job 1: Run tests on different Node versions
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [18.x, 20.x]
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Use Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v3
+        with:
+          node-version: ${{ matrix.node-version }}
+
+      - run: npm install
+
+      # Add your own test command here
+      - run: echo "Running tests... (placeholder)"
+
+  # Job 2: Build, Scan, and Push to Staging
+  build-and-push-staging:
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.event_name == 'push'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Build Docker image
+        id: build_image
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          push: false   # Build only
+          load: true
+          tags: ${{ secrets.DOCKERHUB_USERNAME }}/github-actions-advanced:staging
+
+      - name: Scan image with Trivy
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: '${{ secrets.DOCKERHUB_USERNAME }}/github-actions-advanced:staging'
+          format: 'table'
+          exit-code: '1'
+          ignore-unfixed: true
+          vuln-type: 'os,library'
+          severity: 'CRITICAL,HIGH'
+
+      - name: Push image to Docker Hub
+        run: docker push ${{ secrets.DOCKERHUB_USERNAME }}/github-actions-advanced:staging
+
+  # Job 3: Deploy to Production (manual approval via Release)
+  deploy-production:
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.event_name == 'release'
+    environment:
+      name: production
+      url: http://your-production-url.com
+
+    steps:
+      - name: Login to Docker Hub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Pull staging image and retag for production
+        run: |
+          docker pull ${{ secrets.DOCKERHUB_USERNAME }}/github-actions-advanced:staging
+          docker tag ${{ secrets.DOCKERHUB_USERNAME }}/github-actions-advanced:staging \
+            ${{ secrets.DOCKERHUB_USERNAME }}/github-actions-advanced:${{ github.ref_name }}
+          docker tag ${{ secrets.DOCKERHUB_USERNAME }}/github-actions-advanced:staging \
+            ${{ secrets.DOCKERHUB_USERNAME }}/github-actions-advanced:latest
+
+      - name: Push production tags to Docker Hub
+        run: |
+          docker push ${{ secrets.DOCKERHUB_USERNAME }}/github-actions-advanced:${{ github.ref_name }}
+          docker push ${{ secrets.DOCKERHUB_USERNAME }}/github-actions-advanced:latest
+

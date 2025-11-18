@@ -1,17 +1,21 @@
-FROM alpine:3.18 AS source
+FROM node:20-slim AS builder
 
 WORKDIR /app
-COPY index.html .
-COPY nginx.conf .
+COPY package*.json ./
 
-FROM nginx:1.25-alpine
+RUN npm install
 
-RUN rm /etc/nginx/nginx.conf /etc/nginx/conf.d/default.conf
+COPY . .
 
-COPY --from=source /app/nginx.conf /etc/nginx/nginx.conf
 
-COPY --from=source /app/index.html /usr/share/nginx/html/index.html
+FROM node:20-slim
 
-EXPOSE 80
+WORKDIR /app
 
-CMD ["nginx","-g","daemon off;"]
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/package*.json ./
+COPY --from=builder /app/server.js ./
+
+EXPOSE 3000
+
+CMD ["node","server.js"]
